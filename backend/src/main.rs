@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use warp::Filter;
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use csv::Reader;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::Cursor;
-use tokio::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use tokio::fs;
+use warp::Filter;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TransactionId {
@@ -79,7 +79,8 @@ impl TransactionStore {
         // Load current transactions
         if Path::new("current_transactions.json").exists() {
             let content = fs::read_to_string("current_transactions.json").await?;
-            let data: HashMap<String, HashMap<TransactionId, CurrentTransaction>> = serde_json::from_str(&content)?;
+            let data: HashMap<String, HashMap<TransactionId, CurrentTransaction>> =
+                serde_json::from_str(&content)?;
             *self.current.lock().unwrap() = data;
         }
 
@@ -223,7 +224,9 @@ async fn create_transaction_handler(
 
     {
         let mut current = store.current.lock().unwrap();
-        let account_transactions = current.entry(request.account_id.clone()).or_insert_with(HashMap::new);
+        let account_transactions = current
+            .entry(request.account_id.clone())
+            .or_insert_with(HashMap::new);
 
         if account_transactions.contains_key(&transaction_id) {
             return Ok(warp::reply::with_status(
@@ -257,12 +260,11 @@ async fn bulk_import_handler(
     csv_data: bytes::Bytes,
     store: TransactionStore,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let csv_string = match String::from_utf8(csv_data.to_vec()) {
-        Ok(s) => s,
-        Err(_) => return Ok(warp::reply::with_status(
+    let Ok(csv_string) = String::from_utf8(csv_data.to_vec()) else {
+        return Ok(warp::reply::with_status(
             warp::reply::json(&serde_json::json!({"error": "Invalid UTF-8 in CSV"})),
             warp::http::StatusCode::BAD_REQUEST,
-        )),
+        ));
     };
 
     let cursor = Cursor::new(csv_string);
@@ -274,32 +276,38 @@ async fn bulk_import_handler(
     // Parse CSV records
     for (row_idx, result) in reader.deserialize::<CsvTransaction>().enumerate() {
         match result {
-            Ok(csv_transaction) => {
-                match csv_transaction.timestamp.parse::<DateTime<Utc>>() {
-                    Ok(timestamp) => {
-                        let transaction_id = TransactionId {
-                            timestamp,
-                            amount_cents: (csv_transaction.amount * 100.0).round() as i64,
-                            currency: csv_transaction.currency,
-                            payee: csv_transaction.payee,
-                        };
+            Ok(csv_transaction) => match csv_transaction.timestamp.parse::<DateTime<Utc>>() {
+                Ok(timestamp) => {
+                    let transaction_id = TransactionId {
+                        timestamp,
+                        amount_cents: (csv_transaction.amount * 100.0).round() as i64,
+                        currency: csv_transaction.currency,
+                        payee: csv_transaction.payee,
+                    };
 
-                        let current_transaction = CurrentTransaction {
-                            account_id: account_id.clone(),
-                            id: transaction_id.clone(),
-                        };
+                    let current_transaction = CurrentTransaction {
+                        account_id: account_id.clone(),
+                        id: transaction_id.clone(),
+                    };
 
-                        let historical_transaction = HistoricalTransaction {
-                            account_id: account_id.clone(),
-                            id: transaction_id.clone(),
-                            memo: None,
-                        };
+                    let historical_transaction = HistoricalTransaction {
+                        account_id: account_id.clone(),
+                        id: transaction_id.clone(),
+                        memo: None,
+                    };
 
-                        new_transactions.push((transaction_id, current_transaction, historical_transaction));
-                    },
-                    Err(e) => {
-                        errors.push(format!("Row {}: Invalid timestamp format - {}", row_idx + 2, e));
-                    }
+                    new_transactions.push((
+                        transaction_id,
+                        current_transaction,
+                        historical_transaction,
+                    ));
+                }
+                Err(e) => {
+                    errors.push(format!(
+                        "Row {}: Invalid timestamp format - {}",
+                        row_idx + 2,
+                        e
+                    ));
                 }
             },
             Err(e) => {
@@ -334,13 +342,13 @@ async fn bulk_import_handler(
     // Update current transactions
     {
         let mut current = store.current.lock().unwrap();
-        let account_transactions = current.entry(account_id.clone()).or_insert_with(HashMap::new);
+        let account_transactions = current
+            .entry(account_id.clone())
+            .or_insert_with(HashMap::new);
 
         // Remove existing transactions in the date range
         if let (Some(min_date), Some(max_date)) = (min_date, max_date) {
-            account_transactions.retain(|id, _| {
-                id.timestamp < min_date || id.timestamp > max_date
-            });
+            account_transactions.retain(|id, _| id.timestamp < min_date || id.timestamp > max_date);
         }
 
         // Add new transactions
@@ -384,50 +392,62 @@ async fn update_memo_handler(
     // Extract transaction parameters from query
     let timestamp_str = match query_params.get("timestamp") {
         Some(s) => s,
-        None => return Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": "Missing timestamp parameter"})),
-            warp::http::StatusCode::BAD_REQUEST,
-        )),
+        None => {
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"error": "Missing timestamp parameter"})),
+                warp::http::StatusCode::BAD_REQUEST,
+            ));
+        }
     };
 
     let amount_str = match query_params.get("amount") {
         Some(s) => s,
-        None => return Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": "Missing amount parameter"})),
-            warp::http::StatusCode::BAD_REQUEST,
-        )),
+        None => {
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"error": "Missing amount parameter"})),
+                warp::http::StatusCode::BAD_REQUEST,
+            ));
+        }
     };
 
     let currency = match query_params.get("currency") {
         Some(s) => s,
-        None => return Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": "Missing currency parameter"})),
-            warp::http::StatusCode::BAD_REQUEST,
-        )),
+        None => {
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"error": "Missing currency parameter"})),
+                warp::http::StatusCode::BAD_REQUEST,
+            ));
+        }
     };
 
     let payee = match query_params.get("payee") {
         Some(s) => s,
-        None => return Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": "Missing payee parameter"})),
-            warp::http::StatusCode::BAD_REQUEST,
-        )),
+        None => {
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"error": "Missing payee parameter"})),
+                warp::http::StatusCode::BAD_REQUEST,
+            ));
+        }
     };
 
     let timestamp: DateTime<Utc> = match timestamp_str.parse() {
         Ok(t) => t,
-        Err(_) => return Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": "Invalid timestamp format"})),
-            warp::http::StatusCode::BAD_REQUEST,
-        )),
+        Err(_) => {
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"error": "Invalid timestamp format"})),
+                warp::http::StatusCode::BAD_REQUEST,
+            ));
+        }
     };
 
     let amount: f64 = match amount_str.parse() {
         Ok(a) => a,
-        Err(_) => return Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": "Invalid amount format"})),
-            warp::http::StatusCode::BAD_REQUEST,
-        )),
+        Err(_) => {
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"error": "Invalid amount format"})),
+                warp::http::StatusCode::BAD_REQUEST,
+            ));
+        }
     };
 
     let transaction_id = TransactionId {
@@ -442,18 +462,25 @@ async fn update_memo_handler(
         let mut all = store.all.lock().unwrap();
         let account_transactions = match all.get_mut(&account_id) {
             Some(transactions) => transactions,
-            None => return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Account not found"})),
-                warp::http::StatusCode::NOT_FOUND,
-            )),
+            None => {
+                return Ok(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "Account not found"})),
+                    warp::http::StatusCode::NOT_FOUND,
+                ));
+            }
         };
 
-        let transaction = match account_transactions.iter_mut().find(|t| t.id == transaction_id) {
+        let transaction = match account_transactions
+            .iter_mut()
+            .find(|t| t.id == transaction_id)
+        {
             Some(t) => t,
-            None => return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Transaction not found"})),
-                warp::http::StatusCode::NOT_FOUND,
-            )),
+            None => {
+                return Ok(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "Transaction not found"})),
+                    warp::http::StatusCode::NOT_FOUND,
+                ));
+            }
         };
 
         transaction.memo = memo_request.memo;
