@@ -1,4 +1,5 @@
 use crate::error::ApiError;
+use crate::store::TransactionStore;
 use crate::types::*;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;

@@ -1,5 +1,5 @@
-use crate::error::ApiError;
-use crate::types::*;
+use crate::store::TransactionStore;
+use crate::types::{TransactionId, UpdateMemoRequest};
 use crate::utils::{get_required_param, parse_timestamp, parse_amount};
 use std::collections::HashMap;
 use warp;
@@ -25,29 +25,7 @@ pub async fn update_memo_handler(
         payee,
     };
 
-    // Update memo in a scope to release the lock
-    {
-        let mut all = store.all.lock().unwrap();
-        let account_transactions = all.get_mut(&account_id).ok_or(ApiError {
-            message: "Account not found".to_string(),
-            status: warp::http::StatusCode::NOT_FOUND,
-        }).map_err(warp::reject::custom)?;
-
-        let transaction = account_transactions
-            .iter_mut()
-            .find(|t| t.id == transaction_id)
-            .ok_or(ApiError {
-                message: "Transaction not found".to_string(),
-                status: warp::http::StatusCode::NOT_FOUND,
-            }).map_err(warp::reject::custom)?;
-
-        transaction.memo = memo_request.memo;
-    } // Lock is automatically dropped here
-
-    // Save to files
-    if let Err(e) = store.save_to_files().await {
-        eprintln!("Warning: Failed to save data: {}", e);
-    }
+    store.update_transaction_memo(account_id, transaction_id, memo_request.memo).await.map_err(warp::reject::custom)?;
 
     Ok(warp::reply::with_status(
         warp::reply::json(&serde_json::json!({"message": "Memo updated successfully"})),

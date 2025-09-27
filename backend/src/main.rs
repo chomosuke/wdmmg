@@ -1,11 +1,12 @@
 mod error;
 mod handlers;
+mod store;
 mod types;
 mod utils;
 
 use error::handle_rejection;
 use handlers::*;
-use types::TransactionStore;
+use store::TransactionStore;
 use utils::with_store;
 use warp::Filter;
 
